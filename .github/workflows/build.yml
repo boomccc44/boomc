@@ -1,0 +1,29 @@
+name: Build Flet APK
+
+on:
+  push:
+    branches: [ "main", "master" ]  # 推送代码到 main 或 master 分支时自动触发
+  workflow_dispatch:              # 允许你在网页上手动点击按钮触发
+
+jobs:
+  build-apk:
+    runs-on: ubuntu-latest        # 使用 GitHub 提供的 Linux 云端服务器
+
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 使用 Flet 官方 Action 编译 APK
+        uses: flet-dev/flet-build-action@v1
+        with:
+          target: apk
+          runner-python-version: "3.11"
+          bundled-python-version: "3.11"
+          build-number: ${{ github.run_number }}
+
+      - name: 上传生成的 APK 到网页
+        uses: actions/upload-artifact@v4
+        with:
+          name: app-release-apk
+          path: build/apk/*.apk
+          if-no-files-found: error
