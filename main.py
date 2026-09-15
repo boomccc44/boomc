@@ -1,52 +1,7 @@
 import os
 import sqlite3
-import tkinter as tk
-from tkinter import filedialog
 import pandas as pd
 import flet as ft
-
-DB_FILE = "pe_database.db"
-
-def init_db():
-    conn = sqlite3.connect(DB_FILE)
-    cursor = conn.cursor()
-    cursor.execute('''CREATE TABLE IF NOT EXISTS classes (
-                        id INTEGER PRIMARY KEY AUTOINCREMENT,
-                        grade TEXT,
-                        class_name TEXT
-                    )''')
-    cursor.execute('''CREATE TABLE IF NOT EXISTS students (
-                        id INTEGER PRIMARY KEY AUTOINCREMENT,
-                        class_id INTEGER,
-                        student_no TEXT,
-                        name TEXT,
-                        FOREIGN KEY(class_id) REFERENCES classes(id)
-                    )''')
-    cursor.execute('''CREATE TABLE IF NOT EXISTS items (
-                        id INTEGER PRIMARY KEY AUTOINCREMENT,
-                        item_name TEXT,
-                        unit TEXT
-                    )''')
-    cursor.execute('''CREATE TABLE IF NOT EXISTS scores (
-                        id INTEGER PRIMARY KEY AUTOINCREMENT,
-                        student_id INTEGER,
-                        item_id INTEGER,
-                        score REAL,
-                        FOREIGN KEY(student_id) REFERENCES students(id),
-                        FOREIGN KEY(item_id) REFERENCES items(id)
-                    )''')
-    
-    cursor.execute("SELECT COUNT(*) FROM items")
-    if cursor.fetchone()[0] == 0:
-        default_items = [
-            ("身高", "cm"), ("体重", "kg"), ("肺活量", "ml"),
-            ("50米跑", "秒"), ("坐位体前屈", "cm"), ("1分钟跳绳", "个"),
-            ("1分钟仰卧起坐", "个"), ("立定跳远", "cm")
-        ]
-        cursor.executemany("INSERT INTO items (item_name, unit) VALUES (?, ?)", default_items)
-        
-    conn.commit()
-    conn.close()
 
 def main(page: ft.Page):
     page.title = "小学生体测成绩管理系统"
@@ -54,7 +9,56 @@ def main(page: ft.Page):
     page.horizontal_alignment = ft.CrossAxisAlignment.CENTER
     page.window_width = 440
     page.window_height = 750
-    
+
+    # 适配移动端与桌面端的数据库路径
+    if page.platform in [ft.PagePlatform.ANDROID, ft.PagePlatform.IOS]:
+        db_dir = page.get_app_storage_dir()
+    else:
+        db_dir = "."
+    os.makedirs(db_dir, exist_ok=True)
+    DB_FILE = os.path.join(db_dir, "pe_database.db")
+
+    def init_db():
+        conn = sqlite3.connect(DB_FILE)
+        cursor = conn.cursor()
+        cursor.execute('''CREATE TABLE IF NOT EXISTS classes (
+                            id INTEGER PRIMARY KEY AUTOINCREMENT,
+                            grade TEXT,
+                            class_name TEXT
+                        )''')
+        cursor.execute('''CREATE TABLE IF NOT EXISTS students (
+                            id INTEGER PRIMARY KEY AUTOINCREMENT,
+                            class_id INTEGER,
+                            student_no TEXT,
+                            name TEXT,
+                            FOREIGN KEY(class_id) REFERENCES classes(id)
+                        )''')
+        cursor.execute('''CREATE TABLE IF NOT EXISTS items (
+                            id INTEGER PRIMARY KEY AUTOINCREMENT,
+                            item_name TEXT,
+                            unit TEXT
+                        )''')
+        cursor.execute('''CREATE TABLE IF NOT EXISTS scores (
+                            id INTEGER PRIMARY KEY AUTOINCREMENT,
+                            student_id INTEGER,
+                            item_id INTEGER,
+                            score REAL,
+                            FOREIGN KEY(student_id) REFERENCES students(id),
+                            FOREIGN KEY(item_id) REFERENCES items(id)
+                        )''')
+        
+        cursor.execute("SELECT COUNT(*) FROM items")
+        if cursor.fetchone()[0] == 0:
+            default_items = [
+                ("身高", "cm"), ("体重", "kg"), ("肺活量", "ml"),
+                ("50米跑", "秒"), ("坐位体前屈", "cm"), ("1分钟跳绳", "个"),
+                ("1分钟仰卧起坐", "个"), ("立定跳远", "cm")
+            ]
+            cursor.executemany("INSERT INTO items (item_name, unit) VALUES (?, ?)", default_items)
+            
+        conn.commit()
+        conn.close()
+
     init_db()
     
     title = ft.Text("🏫 体测成绩管理系统", size=22, weight=ft.FontWeight.BOLD)
@@ -83,14 +87,20 @@ def main(page: ft.Page):
     class_input = ft.TextField(label="班级 (例如: 一班)", width=280)
     path_input = ft.TextField(label="Excel文件路径", width=200, read_only=True)
 
-    def select_file(e):
-        root = tk.Tk()
-        root.withdraw()
-        file_path = filedialog.askopenfilename(filetypes=[("Excel files", "*.xlsx *.xls")])
-        root.destroy()
-        if file_path:
-            path_input.value = file_path
+    # 使用 Flet 原生 FilePicker 替代 tkinter
+    import_picker = ft.FilePicker()
+    export_picker = ft.FilePicker()
+    page.overlay.extend([import_picker, export_picker])
+
+    def on_import_file_picked(e: ft.FilePickerResultEvent):
+        if e.files:
+            path_input.value = e.files[0].path
             page.update()
+
+    import_picker.on_result = on_import_file_picked
+
+    def select_file(e):
+        import_picker.pick_files(allowed_extensions=["xlsx", "xls"])
 
     browse_btn = ft.ElevatedButton("选择文件", width=75, on_click=select_file)
     path_row = ft.Row([path_input, browse_btn], alignment=ft.MainAxisAlignment.CENTER, spacing=5)
@@ -225,7 +235,6 @@ def main(page: ft.Page):
                         page.update()
                 return save_score
 
-            # 用文字按钮替代 IconButton，彻底解决图标报错和红块问题
             save_btn = ft.ElevatedButton("保存", width=70, on_click=make_save_handler(student_id, score_input))
             
             row_item = ft.Row([
@@ -322,6 +331,19 @@ def main(page: ft.Page):
         view_dlg.open = True
         page.update()
 
+    def on_export_file_saved(e: ft.FilePickerResultEvent):
+        if e.path:
+            try:
+                result_df = get_class_score_dataframe(class_dropdown.value)
+                result_df.to_excel(e.path, index=False)
+                status_text.value = f"成功导出至: {e.path}"
+                page.update()
+            except Exception as ex:
+                status_text.value = f"导出失败: {str(ex)}"
+                page.update()
+
+    export_picker.on_result = on_export_file_saved
+
     def export_excel(e):
         if not class_dropdown.value:
             status_text.value = "请先选择要导出的班级！"
@@ -335,23 +357,7 @@ def main(page: ft.Page):
             page.update()
             return
             
-        root = tk.Tk()
-        root.withdraw()
-        file_path = filedialog.asksaveasfilename(
-            defaultextension=".xlsx",
-            filetypes=[("Excel files", "*.xlsx")],
-            title="保存班级成绩"
-        )
-        root.destroy()
-        
-        if file_path:
-            try:
-                result_df.to_excel(file_path, index=False)
-                status_text.value = f"成功导出至: {file_path}"
-                page.update()
-            except Exception as ex:
-                status_text.value = f"导出失败: {str(ex)}"
-                page.update()
+        export_picker.save_file(file_name="class_scores.xlsx", allowed_extensions=["xlsx"])
 
     start_btn = ft.ElevatedButton("📝 开始记录成绩", width=280)
     
@@ -391,4 +397,5 @@ def main(page: ft.Page):
         ], alignment=ft.MainAxisAlignment.CENTER)
     )
 
-ft.app(target=main)
+if __name__ == "__main__":
+    ft.app(target=main)

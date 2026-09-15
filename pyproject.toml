@@ -32,4 +32,4 @@ company = "Flet"
 copyright = "Copyright (C) 2023-2026 by Flet"
 
 [tool.flet.app]
-path = "src"
+path = "src/main.py"
