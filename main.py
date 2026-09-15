@@ -1,6 +1,6 @@
 import os
 import sqlite3
-import pandas as pd
+import csv
 import flet as ft
 
 def main(page: ft.Page):
@@ -10,11 +10,14 @@ def main(page: ft.Page):
     page.window_width = 440
     page.window_height = 750
 
-    # 适配移动端与桌面端的数据库路径
+    # 适配移动端与桌面端的数据库及文件路径
     if page.platform in [ft.PagePlatform.ANDROID, ft.PagePlatform.IOS]:
         db_dir = page.get_app_storage_dir()
+        default_search_dir = "/storage/emulated/0/Download"
     else:
         db_dir = "."
+        default_search_dir = "."
+        
     os.makedirs(db_dir, exist_ok=True)
     DB_FILE = os.path.join(db_dir, "pe_database.db")
 
@@ -63,7 +66,7 @@ def main(page: ft.Page):
     
     title = ft.Text("🏫 体测成绩管理系统", size=22, weight=ft.FontWeight.BOLD)
     class_dropdown = ft.Dropdown(label="请先导入班级学生名单", width=300, options=[])
-    status_text = ft.Text("", size=13, color="red")
+    status_text = ft.Text("", size=12, color=ft.Colors.RED)
 
     def load_classes_to_dropdown():
         conn = sqlite3.connect(DB_FILE)
@@ -85,25 +88,28 @@ def main(page: ft.Page):
 
     grade_input = ft.TextField(label="年级 (例如: 三年级)", width=280)
     class_input = ft.TextField(label="班级 (例如: 一班)", width=280)
-    path_input = ft.TextField(label="Excel文件路径", width=200, read_only=True)
+    path_input = ft.TextField(label="CSV文件名 (如: students.csv)", width=195)
 
-    # 使用 Flet 原生 FilePicker 替代 tkinter
-    import_picker = ft.FilePicker()
-    export_picker = ft.FilePicker()
-    page.overlay.extend([import_picker, export_picker])
-
-    def on_import_file_picked(e: ft.FilePickerResultEvent):
-        if e.files:
-            path_input.value = e.files[0].path
+    def scan_download_folder(e):
+        try:
+            target_dir = default_search_dir
+            if os.path.exists(target_dir):
+                files = [f for f in os.listdir(target_dir) if f.endswith('.csv')]
+                if files:
+                    path_input.value = os.path.join(target_dir, files[0])
+                    status_text.value = f"已自动匹配到: {files[0]}"
+                else:
+                    status_text.value = "在 Download 目录未找到 CSV 文件"
+            else:
+                path_input.value = "students.csv"
+                status_text.value = "请将 CSV 文件放入手机 Download 目录"
+            page.update()
+        except Exception as ex:
+            status_text.value = f"查找文件出错: {str(ex)}"
             page.update()
 
-    import_picker.on_result = on_import_file_picked
-
-    def select_file(e):
-        import_picker.pick_files(allowed_extensions=["xlsx", "xls"])
-
-    browse_btn = ft.ElevatedButton("选择文件", width=75, on_click=select_file)
-    path_row = ft.Row([path_input, browse_btn], alignment=ft.MainAxisAlignment.CENTER, spacing=5)
+    scan_btn = ft.OutlinedButton("自动查找", width=80, on_click=scan_download_folder)
+    path_row = ft.Row([path_input, scan_btn], alignment=ft.MainAxisAlignment.CENTER, spacing=5)
 
     def confirm_import(e):
         g_text = grade_input.value.strip()
@@ -115,19 +121,22 @@ def main(page: ft.Page):
             page.update()
             return
             
-        if not file_path or not os.path.exists(file_path):
-            status_text.value = "错误：请先点击右侧按钮选择 Excel 文件！"
+        if not file_path:
+            status_text.value = "错误：请输入文件名或点击自动查找！"
+            page.update()
+            return
+            
+        if not os.path.dirname(file_path):
+            potential_path = os.path.join(default_search_dir, file_path)
+            if os.path.exists(potential_path):
+                file_path = potential_path
+        
+        if not os.path.exists(file_path):
+            status_text.value = f"错误：找不到文件，请确认已放入 Download 目录"
             page.update()
             return
         
         try:
-            df = pd.read_excel(file_path)
-            required_cols = ["学号", "姓名"]
-            if not all(col in df.columns for col in required_cols):
-                status_text.value = "错误：Excel 表格必须包含【学号】和【姓名】表头"
-                page.update()
-                return
-            
             conn = sqlite3.connect(DB_FILE)
             cursor = conn.cursor()
             
@@ -140,12 +149,21 @@ def main(page: ft.Page):
                 class_id = cursor.lastrowid
             
             imported_count = 0
-            for _, row in df.iterrows():
-                s_no = str(row["学号"]).strip()
-                s_name = str(row["姓名"]).strip()
-                cursor.execute("INSERT INTO students (class_id, student_no, name) VALUES (?, ?, ?)",
-                               (class_id, s_no, s_name))
-                imported_count += 1
+            with open(file_path, mode="r", encoding="utf-8-sig") as f:
+                reader = csv.DictReader(f)
+                if not reader.fieldnames or not all(col in reader.fieldnames for col in ["学号", "姓名"]):
+                    status_text.value = "错误：CSV 表格必须包含【学号】和【姓名】表头"
+                    conn.close()
+                    page.update()
+                    return
+                
+                for row in reader:
+                    s_no = str(row["学号"]).strip()
+                    s_name = str(row["姓名"]).strip()
+                    if s_no and s_name:
+                        cursor.execute("INSERT INTO students (class_id, student_no, name) VALUES (?, ?, ?)",
+                                       (class_id, s_no, s_name))
+                        imported_count += 1
                 
             conn.commit()
             conn.close()
@@ -161,7 +179,7 @@ def main(page: ft.Page):
             status_text.value = f"导入失败: {str(ex)}"
             page.update()
 
-    import_btn = ft.ElevatedButton("📥 确认导入 Excel 名单", width=280, on_click=confirm_import)
+    import_btn = ft.ElevatedButton("📥 确认导入 CSV 名单", width=280, on_click=confirm_import)
 
     item_dropdown = ft.Dropdown(
         label="选择体测项目",
@@ -228,10 +246,8 @@ def main(page: ft.Page):
                                 cur.execute("INSERT INTO scores (student_id, item_id, score) VALUES (?, ?, ?)", (s_id, item_id, val))
                         conn_db.commit()
                         conn_db.close()
-                        inp.border_color = "green"
                         page.update()
                     except ValueError:
-                        inp.border_color = "red"
                         page.update()
                 return save_score
 
@@ -267,27 +283,38 @@ def main(page: ft.Page):
     )
     page.overlay.append(score_dlg)
 
-    def get_class_score_dataframe(class_id):
+    def get_class_score_data(class_id):
         conn = sqlite3.connect(DB_FILE)
-        students_df = pd.read_sql(f"SELECT id as student_id, student_no as 学号, name as 姓名 FROM students WHERE class_id={class_id} ORDER BY CAST(student_no AS INTEGER)", conn)
-        if students_df.empty:
-            conn.close()
-            return None
+        cursor = conn.cursor()
         
-        items_df = pd.read_sql("SELECT id, item_name, unit FROM items ORDER BY id", conn)
-        scores_df = pd.read_sql("SELECT student_id, item_id, score FROM scores", conn)
+        cursor.execute("SELECT id, student_no, name FROM students WHERE class_id=? ORDER BY CAST(student_no AS INTEGER)", (class_id,))
+        students = cursor.fetchall()
+        if not students:
+            conn.close()
+            return None, None
+        
+        cursor.execute("SELECT id, item_name, unit FROM items ORDER BY id")
+        items = cursor.fetchall()
+        
+        cursor.execute("SELECT student_id, item_id, score FROM scores")
+        scores = cursor.fetchall()
         conn.close()
         
-        pivot_scores = scores_df.pivot(index='student_id', columns='item_id', values='score')
+        scores_map = {(s[0], s[1]): s[2] for s in scores}
         
-        item_cols = {}
-        for _, row in items_df.iterrows():
-            item_cols[row['id']] = f"{row['item_name']} ({row['unit']})"
-        pivot_scores = pivot_scores.rename(columns=item_cols)
+        headers = ["学号", "姓名"] + [f"{item[1]} ({item[2]})" for item in items]
         
-        result_df = pd.merge(students_df, pivot_scores, left_on='student_id', right_index=True, how='left')
-        result_df = result_df.drop(columns=['student_id'])
-        return result_df
+        rows_data = []
+        for s in students:
+            s_id, s_no, s_name = s[0], s[1], s[2]
+            row = [s_no, s_name]
+            for item in items:
+                item_id = item[0]
+                val = scores_map.get((s_id, item_id), "")
+                row.append(val if val is not None else "")
+            rows_data.append(row)
+            
+        return headers, rows_data
 
     view_table_container = ft.Column([], scroll=ft.ScrollMode.AUTO)
     
@@ -307,16 +334,16 @@ def main(page: ft.Page):
             return
         status_text.value = ""
         
-        result_df = get_class_score_dataframe(class_dropdown.value)
-        if result_df is None or result_df.empty:
+        headers, rows_data = get_class_score_data(class_dropdown.value)
+        if not headers or not rows_data:
             status_text.value = "该班级暂无学生数据！"
             page.update()
             return
             
-        columns = [ft.DataColumn(ft.Text(col, weight=ft.FontWeight.BOLD)) for col in result_df.columns]
+        columns = [ft.DataColumn(ft.Text(h, weight=ft.FontWeight.BOLD)) for h in headers]
         rows = []
-        for _, row in result_df.iterrows():
-            cells = [ft.DataCell(ft.Text(str(val) if pd.notna(val) else "")) for val in row]
+        for rd in rows_data:
+            cells = [ft.DataCell(ft.Text(str(val))) for val in rd]
             rows.append(ft.DataRow(cells=cells))
             
         data_table = ft.DataTable(
@@ -331,39 +358,54 @@ def main(page: ft.Page):
         view_dlg.open = True
         page.update()
 
-    def on_export_file_saved(e: ft.FilePickerResultEvent):
-        if e.path:
-            try:
-                result_df = get_class_score_dataframe(class_dropdown.value)
-                result_df.to_excel(e.path, index=False)
-                status_text.value = f"成功导出至: {e.path}"
-                page.update()
-            except Exception as ex:
-                status_text.value = f"导出失败: {str(ex)}"
-                page.update()
-
-    export_picker.on_result = on_export_file_saved
-
     def export_excel(e):
         if not class_dropdown.value:
             status_text.value = "请先选择要导出的班级！"
             page.update()
             return
-        status_text.value = ""
-        
-        result_df = get_class_score_dataframe(class_dropdown.value)
-        if result_df is None or result_df.empty:
+            
+        headers, rows_data = get_class_score_data(class_dropdown.value)
+        if not headers or not rows_data:
             status_text.value = "该班级暂无数据可导出！"
             page.update()
             return
             
-        export_picker.save_file(file_name="class_scores.xlsx", allowed_extensions=["xlsx"])
+        try:
+            # 查询当前班级名称，用于拼出一个清晰的文件名
+            conn = sqlite3.connect(DB_FILE)
+            cursor = conn.cursor()
+            cursor.execute("SELECT grade, class_name FROM classes WHERE id=?", (class_dropdown.value,))
+            c_info = cursor.fetchone()
+            conn.close()
+            
+            class_tag = f"{c_info[0]}{c_info[1]}" if c_info else "class"
+            filename = f"体测成绩_{class_tag}.csv"
+            
+            # 根据平台决定直接写入的默认目录
+            if page.platform in [ft.PagePlatform.ANDROID, ft.PagePlatform.IOS]:
+                export_dir = default_search_dir
+            else:
+                export_dir = os.getcwd() # 电脑端直接保存在当前脚本/程序运行目录下
+                
+            os.makedirs(export_dir, exist_ok=True)
+            file_path = os.path.join(export_dir, filename)
+            
+            with open(file_path, mode="w", newline="", encoding="utf-8-sig") as f:
+                writer = csv.writer(f)
+                writer.writerow(headers)
+                writer.writerows(rows_data)
+                
+            status_text.value = f"✅ 导出成功！文件已保存在:\n{file_path}"
+            page.update()
+        except Exception as ex:
+            status_text.value = f"导出失败: {str(ex)}"
+            page.update()
 
     start_btn = ft.ElevatedButton("📝 开始记录成绩", width=280)
     
     action_row = ft.Row([
         ft.ElevatedButton("📊 查看成绩", width=135, on_click=view_scores),
-        ft.ElevatedButton("📤 导出 Excel", width=135, on_click=export_excel)
+        ft.ElevatedButton("📤 导出 CSV", width=135, on_click=export_excel)
     ], alignment=ft.MainAxisAlignment.CENTER, spacing=10)
 
     def start_recording(e):
@@ -394,7 +436,7 @@ def main(page: ft.Page):
             action_row,
             ft.Container(height=10),
             status_text
-        ], alignment=ft.MainAxisAlignment.CENTER)
+        ], alignment=ft.MainAxisAlignment.CENTER, horizontal_alignment=ft.CrossAxisAlignment.CENTER)
     )
 
 if __name__ == "__main__":
