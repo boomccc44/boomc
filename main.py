@@ -10,10 +10,10 @@ def main(page: ft.Page):
     page.window_width = 440
     page.window_height = 750
 
-    # 适配移动端与桌面端的数据库及文件路径
+    # 适配移动端与桌面端的数据库及文件路径（全部使用应用安全目录防闪退）
     if page.platform in [ft.PagePlatform.ANDROID, ft.PagePlatform.IOS]:
         db_dir = page.get_app_storage_dir()
-        default_search_dir = "/storage/emulated/0/Download"
+        default_search_dir = page.get_app_storage_dir()  # 手机端使用安全目录，绝对不闪退
     else:
         db_dir = "."
         default_search_dir = "."
@@ -97,12 +97,12 @@ def main(page: ft.Page):
                 files = [f for f in os.listdir(target_dir) if f.endswith('.csv')]
                 if files:
                     path_input.value = os.path.join(target_dir, files[0])
-                    status_text.value = f"已自动匹配到: {files[0]}"
+                    status_text.value = f"已找到文件: {files[0]}"
                 else:
-                    status_text.value = "在 Download 目录未找到 CSV 文件"
+                    status_text.value = "目录中未找到 CSV 文件"
             else:
                 path_input.value = "students.csv"
-                status_text.value = "请将 CSV 文件放入手机 Download 目录"
+                status_text.value = "请输入正确的 CSV 文件名"
             page.update()
         except Exception as ex:
             status_text.value = f"查找文件出错: {str(ex)}"
@@ -122,7 +122,7 @@ def main(page: ft.Page):
             return
             
         if not file_path:
-            status_text.value = "错误：请输入文件名或点击自动查找！"
+            status_text.value = "错误：请输入文件名！"
             page.update()
             return
             
@@ -132,7 +132,7 @@ def main(page: ft.Page):
                 file_path = potential_path
         
         if not os.path.exists(file_path):
-            status_text.value = f"错误：找不到文件，请确认已放入 Download 目录"
+            status_text.value = f"错误：找不到文件，请确认已放入应用目录"
             page.update()
             return
         
@@ -380,10 +380,7 @@ def main(page: ft.Page):
             class_tag = f"{c_info[0]}{c_info[1]}" if c_info else "class"
             filename = f"体测成绩_{class_tag}.csv"
             
-            if page.platform in [ft.PagePlatform.ANDROID, ft.PagePlatform.IOS]:
-                export_dir = default_search_dir
-            else:
-                export_dir = os.getcwd()
+            export_dir = default_search_dir
                 
             os.makedirs(export_dir, exist_ok=True)
             file_path = os.path.join(export_dir, filename)
@@ -393,7 +390,7 @@ def main(page: ft.Page):
                 writer.writerow(headers)
                 writer.writerows(rows_data)
                 
-            status_text.value = f"✅ 导出成功！文件已保存在:\n{file_path}"
+            status_text.value = f"✅ 导出成功！保存在应用目录:\n{file_path}"
             page.update()
         except Exception as ex:
             status_text.value = f"导出失败: {str(ex)}"
