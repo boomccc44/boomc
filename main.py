@@ -1,189 +1,122 @@
+import csv
 import os
 import sqlite3
-import csv
 import flet as ft
 
-def main(page: ft.Page):
-    page.title = "小学生体测成绩管理系统"
-    page.vertical_alignment = ft.MainAxisAlignment.CENTER
-    page.horizontal_alignment = ft.CrossAxisAlignment.CENTER
-    page.window_width = 440
-    page.window_height = 750
 
-    # 适配移动端与桌面端的数据库及文件路径（全部使用应用安全目录防闪退）
-    if page.platform in [ft.PagePlatform.ANDROID, ft.PagePlatform.IOS]:
-        db_dir = page.get_app_storage_dir()
-        default_search_dir = page.get_app_storage_dir()  # 手机端使用安全目录，绝对不闪退
-    else:
-        db_dir = "."
-        default_search_dir = "."
-        
-    os.makedirs(db_dir, exist_ok=True)
-    DB_FILE = os.path.join(db_dir, "pe_database.db")
+APP_NAME = "小学生体测成绩管理系统"
+DB_FILENAME = "pe_database.db"
+
+
+def main(page: ft.Page):
+    page.title = APP_NAME
+    page.padding = 16
+    page.scroll = ft.ScrollMode.AUTO
+
+    # 手机端不设置固定窗口尺寸，让 Android/HyperOS 根据屏幕自动布局。
+    try:
+        page.window.resizable = True
+    except Exception:
+        pass
+
+    # SQLite 永久放在 App 私有安全目录；CSV 由 Android 系统文件选择器负责访问。
+    try:
+        app_dir = page.get_app_storage_dir()
+    except Exception:
+        app_dir = os.path.join(os.getcwd(), "app_data")
+    os.makedirs(app_dir, exist_ok=True)
+    db_file = os.path.join(app_dir, DB_FILENAME)
+
+    def db_connect():
+        conn = sqlite3.connect(db_file, timeout=10)
+        conn.execute("PRAGMA foreign_keys = ON")
+        return conn
 
     def init_db():
-        conn = sqlite3.connect(DB_FILE)
-        cursor = conn.cursor()
-        cursor.execute('''CREATE TABLE IF NOT EXISTS classes (
-                            id INTEGER PRIMARY KEY AUTOINCREMENT,
-                            grade TEXT,
-                            class_name TEXT
-                        )''')
-        cursor.execute('''CREATE TABLE IF NOT EXISTS students (
-                            id INTEGER PRIMARY KEY AUTOINCREMENT,
-                            class_id INTEGER,
-                            student_no TEXT,
-                            name TEXT,
-                            FOREIGN KEY(class_id) REFERENCES classes(id)
-                        )''')
-        cursor.execute('''CREATE TABLE IF NOT EXISTS items (
-                            id INTEGER PRIMARY KEY AUTOINCREMENT,
-                            item_name TEXT,
-                            unit TEXT
-                        )''')
-        cursor.execute('''CREATE TABLE IF NOT EXISTS scores (
-                            id INTEGER PRIMARY KEY AUTOINCREMENT,
-                            student_id INTEGER,
-                            item_id INTEGER,
-                            score REAL,
-                            FOREIGN KEY(student_id) REFERENCES students(id),
-                            FOREIGN KEY(item_id) REFERENCES items(id)
-                        )''')
-        
-        cursor.execute("SELECT COUNT(*) FROM items")
-        if cursor.fetchone()[0] == 0:
-            default_items = [
-                ("身高", "cm"), ("体重", "kg"), ("肺活量", "ml"),
-                ("50米跑", "秒"), ("坐位体前屈", "cm"), ("1分钟跳绳", "个"),
-                ("1分钟仰卧起坐", "个"), ("立定跳远", "cm")
-            ]
-            cursor.executemany("INSERT INTO items (item_name, unit) VALUES (?, ?)", default_items)
-            
-        conn.commit()
-        conn.close()
+        with db_connect() as conn:
+            cur = conn.cursor()
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS classes (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    grade TEXT NOT NULL,
+                    class_name TEXT NOT NULL,
+                    UNIQUE(grade, class_name)
+                )
+            """)
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS students (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    class_id INTEGER NOT NULL,
+                    student_no TEXT NOT NULL,
+                    name TEXT NOT NULL,
+                    FOREIGN KEY(class_id) REFERENCES classes(id) ON DELETE CASCADE,
+                    UNIQUE(class_id, student_no)
+                )
+            """)
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS items (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    item_name TEXT NOT NULL,
+                    unit TEXT NOT NULL
+                )
+            """)
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS scores (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    student_id INTEGER NOT NULL,
+                    item_id INTEGER NOT NULL,
+                    score REAL,
+                    FOREIGN KEY(student_id) REFERENCES students(id) ON DELETE CASCADE,
+                    FOREIGN KEY(item_id) REFERENCES items(id) ON DELETE CASCADE,
+                    UNIQUE(student_id, item_id)
+                )
+            """)
+
+            cur.execute("SELECT COUNT(*) FROM items")
+            if cur.fetchone()[0] == 0:
+                cur.executemany(
+                    "INSERT INTO items (item_name, unit) VALUES (?, ?)",
+                    [
+                        ("身高", "cm"),
+                        ("体重", "kg"),
+                        ("肺活量", "ml"),
+                        ("50米跑", "秒"),
+                        ("坐位体前屈", "cm"),
+                        ("1分钟跳绳", "个"),
+                        ("1分钟仰卧起坐", "个"),
+                        ("立定跳远", "cm"),
+                    ],
+                )
 
     init_db()
-    
-    title = ft.Text("🏫 体测成绩管理系统", size=22, weight=ft.FontWeight.BOLD)
-    class_dropdown = ft.Dropdown(label="请先导入班级学生名单", width=300, options=[])
-    status_text = ft.Text("", size=12, color=ft.Colors.RED)
 
-    def load_classes_to_dropdown():
-        conn = sqlite3.connect(DB_FILE)
-        cursor = conn.cursor()
-        cursor.execute("SELECT id, grade, class_name FROM classes")
-        classes = cursor.fetchall()
-        conn.close()
-        
-        class_dropdown.options = []
-        if classes:
-            for c in classes:
-                class_dropdown.options.append(ft.dropdown.Option(key=str(c[0]), text=f"{c[1]}{c[2]}"))
-            class_dropdown.label = "选择已导入的班级"
-        else:
-            class_dropdown.label = "暂无班级，请先导入"
-        page.update()
+    # ---------- 通用 UI ----------
+    title = ft.Text(APP_NAME, size=22, weight=ft.FontWeight.BOLD)
+    status_text = ft.Text("", size=12)
 
-    load_classes_to_dropdown()
+    grade_input = ft.TextField(
+        label="年级（例如：三年级）",
+        width=300,
+    )
+    class_input = ft.TextField(
+        label="班级（例如：一班）",
+        width=300,
+    )
+    path_input = ft.TextField(
+        label="已选择 CSV 文件",
+        read_only=True,
+        expand=True,
+    )
 
-    grade_input = ft.TextField(label="年级 (例如: 三年级)", width=280)
-    class_input = ft.TextField(label="班级 (例如: 一班)", width=280)
-    path_input = ft.TextField(label="CSV文件名 (如: students.csv)", width=195)
-
-    def scan_download_folder(e):
-        try:
-            target_dir = default_search_dir
-            if os.path.exists(target_dir):
-                files = [f for f in os.listdir(target_dir) if f.endswith('.csv')]
-                if files:
-                    path_input.value = os.path.join(target_dir, files[0])
-                    status_text.value = f"已找到文件: {files[0]}"
-                else:
-                    status_text.value = "目录中未找到 CSV 文件"
-            else:
-                path_input.value = "students.csv"
-                status_text.value = "请输入正确的 CSV 文件名"
-            page.update()
-        except Exception as ex:
-            status_text.value = f"查找文件出错: {str(ex)}"
-            page.update()
-
-    scan_btn = ft.OutlinedButton("自动查找", width=80, on_click=scan_download_folder)
-    path_row = ft.Row([path_input, scan_btn], alignment=ft.MainAxisAlignment.CENTER, spacing=5)
-
-    def confirm_import(e):
-        g_text = grade_input.value.strip()
-        c_text = class_input.value.strip()
-        file_path = path_input.value.strip()
-        
-        if not g_text or not c_text:
-            status_text.value = "错误：年级和班级名称不能为空！"
-            page.update()
-            return
-            
-        if not file_path:
-            status_text.value = "错误：请输入文件名！"
-            page.update()
-            return
-            
-        if not os.path.dirname(file_path):
-            potential_path = os.path.join(default_search_dir, file_path)
-            if os.path.exists(potential_path):
-                file_path = potential_path
-        
-        if not os.path.exists(file_path):
-            status_text.value = f"错误：找不到文件，请确认已放入应用目录"
-            page.update()
-            return
-        
-        try:
-            conn = sqlite3.connect(DB_FILE)
-            cursor = conn.cursor()
-            
-            cursor.execute("SELECT id FROM classes WHERE grade=? AND class_name=?", (g_text, c_text))
-            res = cursor.fetchone()
-            if res:
-                class_id = res[0]
-            else:
-                cursor.execute("INSERT INTO classes (grade, class_name) VALUES (?, ?)", (g_text, c_text))
-                class_id = cursor.lastrowid
-            
-            imported_count = 0
-            with open(file_path, mode="r", encoding="utf-8-sig") as f:
-                reader = csv.DictReader(f)
-                if not reader.fieldnames or not all(col in reader.fieldnames for col in ["学号", "姓名"]):
-                    status_text.value = "错误：CSV 表格必须包含【学号】和【姓名】表头"
-                    conn.close()
-                    page.update()
-                    return
-                
-                for row in reader:
-                    s_no = str(row["学号"]).strip()
-                    s_name = str(row["姓名"]).strip()
-                    if s_no and s_name:
-                        cursor.execute("INSERT INTO students (class_id, student_no, name) VALUES (?, ?, ?)",
-                                       (class_id, s_no, s_name))
-                        imported_count += 1
-                
-            conn.commit()
-            conn.close()
-            
-            load_classes_to_dropdown()
-            status_text.value = f"成功为 {g_text}{c_text} 导入 {imported_count} 名学生！"
-            grade_input.value = ""
-            class_input.value = ""
-            path_input.value = ""
-            page.update()
-            
-        except Exception as ex:
-            status_text.value = f"导入失败: {str(ex)}"
-            page.update()
-
-    import_btn = ft.ElevatedButton("📥 确认导入 CSV 名单", width=280, on_click=confirm_import)
+    class_dropdown = ft.Dropdown(
+        label="请先导入班级学生名单",
+        width=300,
+        options=[],
+    )
 
     item_dropdown = ft.Dropdown(
         label="选择体测项目",
-        width=280,
+        width=300,
         value="1",
         options=[
             ft.dropdown.Option(key="1", text="身高 (cm)"),
@@ -194,249 +127,528 @@ def main(page: ft.Page):
             ft.dropdown.Option(key="6", text="1分钟跳绳 (个)"),
             ft.dropdown.Option(key="7", text="1分钟仰卧起坐 (个)"),
             ft.dropdown.Option(key="8", text="立定跳远 (cm)"),
-        ]
+        ],
     )
 
-    students_list_view = ft.ListView(expand=1, spacing=8, padding=5, width=320, height=380)
-
-    def open_score_popup(e):
-        project_dlg.open = False
+    def set_status(message, error=False):
+        status_text.value = message
+        status_text.color = ft.Colors.RED if error else ft.Colors.GREEN
         page.update()
-        
-        class_id = class_dropdown.value
-        item_id = int(item_dropdown.value)
-        
-        students_list_view.controls.clear()
-        
-        conn = sqlite3.connect(DB_FILE)
-        cursor = conn.cursor()
-        cursor.execute('''SELECT s.id, s.student_no, s.name, sc.score 
-                          FROM students s 
-                          LEFT JOIN scores sc ON s.id = sc.student_id AND sc.item_id = ?
-                          WHERE s.class_id = ? ORDER BY CAST(s.student_no AS INTEGER) ASC''', (item_id, class_id))
-        rows = cursor.fetchall()
-        conn.close()
-        
-        if not rows:
-            status_text.value = "该班级暂无学生名单！"
-            page.update()
+
+    def load_classes_to_dropdown():
+        with db_connect() as conn:
+            rows = conn.execute(
+                "SELECT id, grade, class_name FROM classes "
+                "ORDER BY id"
+            ).fetchall()
+
+        class_dropdown.options = [
+            ft.dropdown.Option(
+                key=str(row[0]),
+                text=f"{row[1]}{row[2]}",
+            )
+            for row in rows
+        ]
+        class_dropdown.label = (
+            "选择已导入的班级" if rows else "暂无班级，请先导入"
+        )
+        page.update()
+
+    load_classes_to_dropdown()
+
+    # ---------- Android 文件选择器 ----------
+    import_picker = ft.FilePicker()
+    export_picker = ft.FilePicker()
+    page.overlay.extend([import_picker, export_picker])
+
+    pending_export = {"bytes": None, "filename": None}
+
+    def on_import_result(e: ft.FilePickerResultEvent):
+        if not e.files:
+            return
+        selected = e.files[0]
+        path_input.value = selected.path or selected.name
+        path_input.data = selected.path
+        set_status(f"已选择文件：{selected.name}")
+
+    import_picker.on_result = on_import_result
+
+    def choose_csv(e):
+        import_picker.pick_files(
+            allow_multiple=False,
+            allowed_extensions=["csv"],
+            dialog_title="选择学生名单 CSV 文件",
+        )
+
+    choose_file_btn = ft.OutlinedButton(
+        "选择 CSV",
+        width=95,
+        on_click=choose_csv,
+    )
+
+    # ---------- 导入 CSV ----------
+    def confirm_import(e):
+        g_text = (grade_input.value or "").strip()
+        c_text = (class_input.value or "").strip()
+        file_path = getattr(path_input, "data", None) or ""
+
+        if not g_text or not c_text:
+            set_status("错误：年级和班级名称不能为空！", True)
             return
 
-        for r in rows:
-            student_id, s_no, s_name, current_score = r[0], r[1], r[2], r[3]
-            score_val = str(current_score) if current_score is not None else ""
-            
-            score_input = ft.TextField(value=score_val, width=80, text_align=ft.TextAlign.CENTER)
-            
-            def make_save_handler(s_id, inp):
-                def save_score(e):
-                    try:
-                        val = float(inp.value.strip()) if inp.value.strip() != "" else None
-                        conn_db = sqlite3.connect(DB_FILE)
-                        cur = conn_db.cursor()
-                        cur.execute("SELECT id FROM scores WHERE student_id=? AND item_id=?", (s_id, item_id))
-                        res = cur.fetchone()
-                        if res:
-                            if val is not None:
-                                cur.execute("UPDATE scores SET score=? WHERE id=?", (val, res[0]))
-                            else:
-                                cur.execute("DELETE FROM scores WHERE id=?", (res[0],))
+        if not file_path or not os.path.isfile(file_path):
+            set_status("错误：请先点击“选择 CSV”选择学生名单。", True)
+            return
+
+        imported_count = 0
+        updated_count = 0
+
+        try:
+            with db_connect() as conn:
+                cur = conn.cursor()
+
+                cur.execute(
+                    "SELECT id FROM classes WHERE grade=? AND class_name=?",
+                    (g_text, c_text),
+                )
+                row = cur.fetchone()
+                if row:
+                    class_id = row[0]
+                else:
+                    cur.execute(
+                        "INSERT INTO classes (grade, class_name) VALUES (?, ?)",
+                        (g_text, c_text),
+                    )
+                    class_id = cur.lastrowid
+
+                # utf-8-sig 兼容 Excel 导出的中文 CSV。
+                with open(file_path, "r", encoding="utf-8-sig", newline="") as f:
+                    reader = csv.DictReader(f)
+                    if not reader.fieldnames:
+                        raise ValueError("CSV 文件没有表头。")
+                    if "学号" not in reader.fieldnames or "姓名" not in reader.fieldnames:
+                        raise ValueError("CSV 表格必须包含【学号】和【姓名】表头。")
+
+                    for row_data in reader:
+                        s_no = str(row_data.get("学号", "") or "").strip()
+                        s_name = str(row_data.get("姓名", "") or "").strip()
+                        if not s_no or not s_name:
+                            continue
+
+                        cur.execute(
+                            "SELECT id, name FROM students "
+                            "WHERE class_id=? AND student_no=?",
+                            (class_id, s_no),
+                        )
+                        old = cur.fetchone()
+                        if old:
+                            if old[1] != s_name:
+                                cur.execute(
+                                    "UPDATE students SET name=? WHERE id=?",
+                                    (s_name, old[0]),
+                                )
+                            updated_count += 1
                         else:
-                            if val is not None:
-                                cur.execute("INSERT INTO scores (student_id, item_id, score) VALUES (?, ?, ?)", (s_id, item_id, val))
-                        conn_db.commit()
-                        conn_db.close()
-                        page.update()
+                            cur.execute(
+                                "INSERT INTO students "
+                                "(class_id, student_no, name) VALUES (?, ?, ?)",
+                                (class_id, s_no, s_name),
+                            )
+                            imported_count += 1
+
+            load_classes_to_dropdown()
+            grade_input.value = ""
+            class_input.value = ""
+            path_input.value = ""
+            path_input.data = None
+
+            set_status(
+                f"导入完成：新增 {imported_count} 人，已存在/更新 {updated_count} 人。"
+            )
+        except UnicodeDecodeError:
+            set_status("导入失败：CSV 编码无法识别，请用 UTF-8/UTF-8-BOM 保存。", True)
+        except Exception as ex:
+            set_status(f"导入失败：{ex}", True)
+
+    import_btn = ft.ElevatedButton(
+        "📥 确认导入 CSV 名单",
+        width=300,
+        on_click=confirm_import,
+    )
+
+    # ---------- 成绩录入 ----------
+    students_list_view = ft.ListView(
+        expand=True,
+        spacing=8,
+        padding=5,
+    )
+
+    score_dlg = ft.AlertDialog(
+        title=ft.Text("📝 班级成绩录入"),
+        content=ft.Container(
+            content=students_list_view,
+            width=520,
+            height=500,
+        ),
+        actions=[],
+    )
+    page.overlay.append(score_dlg)
+
+    def close_score_dlg(e=None):
+        score_dlg.open = False
+        page.update()
+
+    def open_score_popup(e=None):
+        class_value = class_dropdown.value
+        if not class_value:
+            set_status("请先选择班级！", True)
+            return
+
+        item_value = item_dropdown.value
+        if not item_value:
+            set_status("请选择体测项目！", True)
+            return
+
+        class_id = int(class_value)
+        item_id = int(item_value)
+
+        students_list_view.controls.clear()
+
+        with db_connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT s.id, s.student_no, s.name, sc.score
+                FROM students s
+                LEFT JOIN scores sc
+                    ON s.id = sc.student_id AND sc.item_id = ?
+                WHERE s.class_id = ?
+                ORDER BY
+                    CASE
+                        WHEN s.student_no GLOB '[0-9]*'
+                        THEN CAST(s.student_no AS INTEGER)
+                        ELSE 999999999
+                    END,
+                    s.student_no
+                """,
+                (item_id, class_id),
+            ).fetchall()
+
+        if not rows:
+            set_status("该班级暂无学生名单！", True)
+            return
+
+        for student_id, s_no, s_name, current_score in rows:
+            score_input = ft.TextField(
+                value="" if current_score is None else str(current_score),
+                width=90,
+                text_align=ft.TextAlign.CENTER,
+                keyboard_type=ft.KeyboardType.NUMBER,
+            )
+
+            def make_save_handler(s_id, inp, selected_item_id):
+                def save_score(e):
+                    raw = (inp.value or "").strip()
+
+                    try:
+                        value = None if raw == "" else float(raw)
                     except ValueError:
-                        page.update()
+                        set_status(
+                            f"{s_name}：成绩必须是数字。",
+                            True,
+                        )
+                        return
+
+                    try:
+                        with db_connect() as conn:
+                            if value is None:
+                                conn.execute(
+                                    "DELETE FROM scores "
+                                    "WHERE student_id=? AND item_id=?",
+                                    (s_id, selected_item_id),
+                                )
+                            else:
+                                conn.execute(
+                                    """
+                                    INSERT INTO scores(student_id, item_id, score)
+                                    VALUES (?, ?, ?)
+                                    ON CONFLICT(student_id, item_id)
+                                    DO UPDATE SET score=excluded.score
+                                    """,
+                                    (s_id, selected_item_id, value),
+                                )
+                        set_status("成绩保存成功。")
+                    except Exception as ex:
+                        set_status(f"保存失败：{ex}", True)
+
                 return save_score
 
-            save_btn = ft.ElevatedButton("保存", width=70, on_click=make_save_handler(student_id, score_input))
-            
-            row_item = ft.Row([
-                ft.Text(f"{s_no}号 {s_name}", width=150, size=14, weight=ft.FontWeight.W_500),
-                score_input,
-                save_btn
-            ], alignment=ft.MainAxisAlignment.SPACE_BETWEEN)
-            
+            save_btn = ft.ElevatedButton(
+                "保存",
+                width=75,
+                on_click=make_save_handler(
+                    student_id, score_input, item_id
+                ),
+            )
+
+            row_item = ft.Row(
+                [
+                    ft.Text(
+                        f"{s_no}号 {s_name}",
+                        expand=True,
+                        size=14,
+                    ),
+                    score_input,
+                    save_btn,
+                ],
+                spacing=8,
+            )
             students_list_view.controls.append(row_item)
 
+        score_dlg.actions = [
+            ft.ElevatedButton("完成/关闭", on_click=close_score_dlg)
+        ]
         score_dlg.open = True
         page.update()
 
     project_dlg = ft.AlertDialog(
         title=ft.Text("请选择测试项目"),
         content=item_dropdown,
-        actions=[
-            ft.TextButton("取消", on_click=lambda _: setattr(project_dlg, "open", False) or page.update()),
-            ft.ElevatedButton("确定，开始记录", on_click=open_score_popup),
-        ],
+        actions=[],
     )
     page.overlay.append(project_dlg)
 
-    score_dlg = ft.AlertDialog(
-        title=ft.Text("📝 班级成绩录入 (按学号排序)"),
-        content=ft.Container(content=students_list_view, height=400, width=340),
-        actions=[
-            ft.ElevatedButton("完成/关闭", on_click=lambda _: setattr(score_dlg, "open", False) or page.update()),
-        ],
-    )
-    page.overlay.append(score_dlg)
-
-    def get_class_score_data(class_id):
-        conn = sqlite3.connect(DB_FILE)
-        cursor = conn.cursor()
-        
-        cursor.execute("SELECT id, student_no, name FROM students WHERE class_id=? ORDER BY CAST(student_no AS INTEGER)", (class_id,))
-        students = cursor.fetchall()
-        if not students:
-            conn.close()
-            return None, None
-        
-        cursor.execute("SELECT id, item_name, unit FROM items ORDER BY id")
-        items = cursor.fetchall()
-        
-        cursor.execute("SELECT student_id, item_id, score FROM scores")
-        scores = cursor.fetchall()
-        conn.close()
-        
-        scores_map = {(s[0], s[1]): s[2] for s in scores}
-        
-        headers = ["学号", "姓名"] + [f"{item[1]} ({item[2]})" for item in items]
-        
-        rows_data = []
-        for s in students:
-            s_id, s_no, s_name = s[0], s[1], s[2]
-            row = [s_no, s_name]
-            for item in items:
-                item_id = item[0]
-                val = scores_map.get((s_id, item_id), "")
-                row.append(val if val is not None else "")
-            rows_data.append(row)
-            
-        return headers, rows_data
-
-    view_table_container = ft.Column([], scroll=ft.ScrollMode.AUTO)
-    
-    view_dlg = ft.AlertDialog(
-        title=ft.Text("📊 班级成绩总览"),
-        content=ft.Container(content=view_table_container, width=380, height=420),
-        actions=[
-            ft.ElevatedButton("关闭", on_click=lambda _: setattr(view_dlg, "open", False) or page.update()),
-        ],
-    )
-    page.overlay.append(view_dlg)
-
-    def view_scores(e):
-        if not class_dropdown.value:
-            status_text.value = "请先选择要查看的班级！"
-            page.update()
-            return
-        status_text.value = ""
-        
-        headers, rows_data = get_class_score_data(class_dropdown.value)
-        if not headers or not rows_data:
-            status_text.value = "该班级暂无学生数据！"
-            page.update()
-            return
-            
-        columns = [ft.DataColumn(ft.Text(h, weight=ft.FontWeight.BOLD)) for h in headers]
-        rows = []
-        for rd in rows_data:
-            cells = [ft.DataCell(ft.Text(str(val))) for val in rd]
-            rows.append(ft.DataRow(cells=cells))
-            
-        data_table = ft.DataTable(
-            columns=columns,
-            rows=rows,
-        )
-        
-        view_table_container.controls = [
-            ft.Row([data_table], scroll=ft.ScrollMode.AUTO)
-        ]
-        
-        view_dlg.open = True
+    def close_project_dlg(e=None):
+        project_dlg.open = False
         page.update()
 
-    def export_excel(e):
-        if not class_dropdown.value:
-            status_text.value = "请先选择要导出的班级！"
-            page.update()
-            return
-            
-        headers, rows_data = get_class_score_data(class_dropdown.value)
-        if not headers or not rows_data:
-            status_text.value = "该班级暂无数据可导出！"
-            page.update()
-            return
-            
-        try:
-            conn = sqlite3.connect(DB_FILE)
-            cursor = conn.cursor()
-            cursor.execute("SELECT grade, class_name FROM classes WHERE id=?", (class_dropdown.value,))
-            c_info = cursor.fetchone()
-            conn.close()
-            
-            class_tag = f"{c_info[0]}{c_info[1]}" if c_info else "class"
-            filename = f"体测成绩_{class_tag}.csv"
-            
-            export_dir = default_search_dir
-                
-            os.makedirs(export_dir, exist_ok=True)
-            file_path = os.path.join(export_dir, filename)
-            
-            with open(file_path, mode="w", newline="", encoding="utf-8-sig") as f:
-                writer = csv.writer(f)
-                writer.writerow(headers)
-                writer.writerows(rows_data)
-                
-            status_text.value = f"✅ 导出成功！保存在应用目录:\n{file_path}"
-            page.update()
-        except Exception as ex:
-            status_text.value = f"导出失败: {str(ex)}"
-            page.update()
-
-    start_btn = ft.ElevatedButton("📝 开始记录成绩", width=280)
-    
-    action_row = ft.Row([
-        ft.ElevatedButton("📊 查看成绩", width=135, on_click=view_scores),
-        ft.ElevatedButton("📤 导出 CSV", width=135, on_click=export_excel)
-    ], alignment=ft.MainAxisAlignment.CENTER, spacing=10)
+    project_dlg.actions = [
+        ft.TextButton("取消", on_click=close_project_dlg),
+        ft.ElevatedButton(
+            "确定，开始记录",
+            on_click=lambda e: (
+                close_project_dlg(),
+                open_score_popup(e),
+            ),
+        ),
+    ]
 
     def start_recording(e):
         if not class_dropdown.value:
-            status_text.value = "请先选择要记录成绩的班级！"
-            page.update()
+            set_status("请先选择要记录成绩的班级！", True)
             return
-        status_text.value = ""
         project_dlg.open = True
         page.update()
 
-    start_btn.on_click = start_recording
-
-    page.add(
-        ft.Column([
-            title,
-            ft.Container(height=10),
-            grade_input,
-            class_input,
-            path_row,
-            ft.Container(height=5),
-            import_btn,
-            ft.Divider(height=20),
-            class_dropdown,
-            ft.Container(height=5),
-            start_btn,
-            ft.Container(height=5),
-            action_row,
-            ft.Container(height=10),
-            status_text
-        ], alignment=ft.MainAxisAlignment.CENTER, horizontal_alignment=ft.CrossAxisAlignment.CENTER)
+    start_btn = ft.ElevatedButton(
+        "📝 开始记录成绩",
+        width=300,
+        on_click=start_recording,
     )
 
+    # ---------- 成绩数据 ----------
+    def get_class_score_data(class_id):
+        with db_connect() as conn:
+            students = conn.execute(
+                """
+                SELECT id, student_no, name
+                FROM students
+                WHERE class_id=?
+                ORDER BY
+                    CASE
+                        WHEN student_no GLOB '[0-9]*'
+                        THEN CAST(student_no AS INTEGER)
+                        ELSE 999999999
+                    END,
+                    student_no
+                """,
+                (class_id,),
+            ).fetchall()
+
+            if not students:
+                return None, None
+
+            items = conn.execute(
+                "SELECT id, item_name, unit FROM items ORDER BY id"
+            ).fetchall()
+
+            scores = conn.execute(
+                "SELECT student_id, item_id, score FROM scores"
+            ).fetchall()
+
+        scores_map = {(x[0], x[1]): x[2] for x in scores}
+        headers = ["学号", "姓名"] + [
+            f"{item[1]} ({item[2]})" for item in items
+        ]
+
+        data = []
+        for student_id, student_no, name in students:
+            row = [student_no, name]
+            for item_id, _, _ in items:
+                value = scores_map.get((student_id, item_id), "")
+                row.append("" if value is None else value)
+            data.append(row)
+
+        return headers, data
+
+    view_table_container = ft.Container(
+        expand=True,
+        content=ft.Text(""),
+    )
+
+    view_dlg = ft.AlertDialog(
+        title=ft.Text("📊 班级成绩总览"),
+        content=ft.Container(
+            content=view_table_container,
+            width=700,
+            height=500,
+        ),
+        actions=[],
+    )
+    page.overlay.append(view_dlg)
+
+    def close_view_dlg(e=None):
+        view_dlg.open = False
+        page.update()
+
+    def view_scores(e):
+        if not class_dropdown.value:
+            set_status("请先选择要查看的班级！", True)
+            return
+
+        headers, rows_data = get_class_score_data(
+            int(class_dropdown.value)
+        )
+
+        if not headers or not rows_data:
+            set_status("该班级暂无学生数据！", True)
+            return
+
+        columns = [
+            ft.DataColumn(ft.Text(h, weight=ft.FontWeight.BOLD))
+            for h in headers
+        ]
+        rows = [
+            ft.DataRow(
+                cells=[
+                    ft.DataCell(ft.Text(str(value)))
+                    for value in row
+                ]
+            )
+            for row in rows_data
+        ]
+
+        data_table = ft.DataTable(
+            columns=columns,
+            rows=rows,
+            column_spacing=18,
+        )
+
+        view_table_container.content = ft.Row(
+            [data_table],
+            scroll=ft.ScrollMode.ALWAYS,
+        )
+        view_dlg.actions = [
+            ft.ElevatedButton("关闭", on_click=close_view_dlg)
+        ]
+        view_dlg.open = True
+        page.update()
+
+    # ---------- 导出 ----------
+    def on_export_result(e: ft.FilePickerResultEvent):
+        if not e.path:
+            return
+
+        try:
+            target = e.path
+            data = pending_export["bytes"]
+            with open(target, "wb") as f:
+                f.write(data)
+            set_status(f"✅ 导出成功：{os.path.basename(target)}")
+        except Exception as ex:
+            set_status(f"导出失败：{ex}", True)
+
+    export_picker.on_result = on_export_result
+
+    def export_csv(e):
+        if not class_dropdown.value:
+            set_status("请先选择要导出的班级！", True)
+            return
+
+        headers, rows_data = get_class_score_data(
+            int(class_dropdown.value)
+        )
+        if not headers or not rows_data:
+            set_status("该班级暂无数据可导出！", True)
+            return
+
+        try:
+            with db_connect() as conn:
+                c_info = conn.execute(
+                    "SELECT grade, class_name FROM classes WHERE id=?",
+                    (int(class_dropdown.value),),
+                ).fetchone()
+
+            class_tag = (
+                f"{c_info[0]}{c_info[1]}"
+                if c_info
+                else "class"
+            )
+            filename = f"体测成绩_{class_tag}.csv"
+
+            import io
+            output = io.StringIO(newline="")
+            writer = csv.writer(output)
+            writer.writerow(headers)
+            writer.writerows(rows_data)
+
+            pending_export["bytes"] = output.getvalue().encode("utf-8-sig")
+            pending_export["filename"] = filename
+
+            export_picker.save_file(
+                file_name=filename,
+                dialog_title="保存体测成绩 CSV",
+            )
+        except Exception as ex:
+            set_status(f"导出失败：{ex}", True)
+
+    view_btn = ft.ElevatedButton(
+        "📊 查看成绩",
+        expand=True,
+        on_click=view_scores,
+    )
+    export_btn = ft.ElevatedButton(
+        "📤 导出 CSV",
+        expand=True,
+        on_click=export_csv,
+    )
+
+    # ---------- 页面 ----------
+    page.add(
+        ft.Column(
+            [
+                title,
+                ft.Divider(),
+                grade_input,
+                class_input,
+                ft.Row(
+                    [path_input, choose_file_btn],
+                    spacing=6,
+                ),
+                import_btn,
+                ft.Divider(height=20),
+                class_dropdown,
+                start_btn,
+                ft.Row(
+                    [view_btn, export_btn],
+                    spacing=10,
+                ),
+                status_text,
+            ],
+            horizontal_alignment=ft.CrossAxisAlignment.CENTER,
+            spacing=12,
+        )
+    )
+
+
 if __name__ == "__main__":
-    import sys
-    if "android" in sys.platform or hasattr(sys, "getandroidapilevel"):
-        pass
-    else:
-        ft.app(target=main)
+    ft.app(target=main)
