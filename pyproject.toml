@@ -1,24 +1,22 @@
 [project]
 name = "pe-app"
-version = "0.1.0"
-description = ""
+version = "1.0.0"
+description = "小学生体质健康测试成绩管理系统"
 readme = "README.md"
-requires-python = ">=3.10"
+requires-python = ">=3.14,<3.15"
 authors = [
-    { name = "Flet developer", email = "you@example.com" }
+    { name = "BoomCCC" }
 ]
 dependencies = [
-    "flet>=0.86.5"
+    "flet==0.86.5"
 ]
 
 [dependency-groups]
 dev = [
-    "flet-cli>=0.86.5",
-    "flet-desktop>=0.86.5",
-    "flet-web>=0.86.5",
-    # Integration testing with `flet test` / pytest. The `test` extra brings in
-    # pytest, pytest-asyncio and the screenshot-comparison dependencies.
-    "flet[test]>=0.86.5",
+    "flet-cli==0.86.5",
+    "flet-desktop==0.86.5",
+    "flet-web==0.86.5",
+    "flet[test]==0.86.5",
 ]
 
 [tool.pytest.ini_options]
@@ -26,10 +24,14 @@ asyncio_mode = "auto"
 testpaths = ["tests"]
 
 [tool.flet]
-org = "com.mycompany"
-product = "pe-app"
-company = "Flet"
-copyright = "Copyright (C) 2023-2026 by Flet"
+org = "com.boomccc"
+product = "小学体测成绩管理"
+company = "BoomCCC"
+copyright = "Copyright (C) 2026 BoomCCC"
 
 [tool.flet.app]
 path = "."
+
+[tool.flet.android]
+min_sdk_version = 24
+target_sdk_version = 35

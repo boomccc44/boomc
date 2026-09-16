@@ -26,3 +26,9 @@ storage/
 
 # macOS
 .DS_Store
+
+pe_database.db
+build/
+__pycache__/
+*.pyc
+.venv/
