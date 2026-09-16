@@ -371,7 +371,6 @@ def main(page: ft.Page):
             return
             
         try:
-            # 查询当前班级名称，用于拼出一个清晰的文件名
             conn = sqlite3.connect(DB_FILE)
             cursor = conn.cursor()
             cursor.execute("SELECT grade, class_name FROM classes WHERE id=?", (class_dropdown.value,))
@@ -381,11 +380,10 @@ def main(page: ft.Page):
             class_tag = f"{c_info[0]}{c_info[1]}" if c_info else "class"
             filename = f"体测成绩_{class_tag}.csv"
             
-            # 根据平台决定直接写入的默认目录
             if page.platform in [ft.PagePlatform.ANDROID, ft.PagePlatform.IOS]:
                 export_dir = default_search_dir
             else:
-                export_dir = os.getcwd() # 电脑端直接保存在当前脚本/程序运行目录下
+                export_dir = os.getcwd()
                 
             os.makedirs(export_dir, exist_ok=True)
             file_path = os.path.join(export_dir, filename)
@@ -440,4 +438,8 @@ def main(page: ft.Page):
     )
 
 if __name__ == "__main__":
-    ft.app(target=main)
+    import sys
+    if "android" in sys.platform or hasattr(sys, "getandroidapilevel"):
+        pass
+    else:
+        ft.app(target=main)
