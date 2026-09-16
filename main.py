@@ -1,6 +1,7 @@
 import os
 import sqlite3
 import csv
+from pathlib import Path
 import flet as ft
 
 def main(page: ft.Page):
@@ -10,14 +11,16 @@ def main(page: ft.Page):
     page.window_width = 440
     page.window_height = 750
 
-    # 适配移动端与桌面端的数据库及文件路径（全部使用应用安全目录防闪退）
-    if page.platform in [ft.PagePlatform.ANDROID, ft.PagePlatform.IOS]:
-        db_dir = page.get_app_storage_dir()
-        default_search_dir = page.get_app_storage_dir()  # 手机端使用安全目录，绝对不闪退
-    else:
-        db_dir = "."
-        default_search_dir = "."
-        
+    # Flet 0.86+：使用应用专用的持久化数据目录
+    app_data_dir = os.getenv("FLET_APP_STORAGE_DATA")
+
+    if not app_data_dir:
+        # 本地开发环境的保险措施
+        app_data_dir = str(Path.cwd())
+
+    db_dir = app_data_dir
+    default_search_dir = app_data_dir
+
     os.makedirs(db_dir, exist_ok=True)
     DB_FILE = os.path.join(db_dir, "pe_database.db")
 
